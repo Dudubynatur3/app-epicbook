@@ -1,0 +1,37 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  - task: UsePythonVersion@0
+    displayName: 'Use Python 3.x'
+    inputs:
+      versionSpec: '3.x'
+      addToPath: true
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install ansible
+    displayName: 'Install Ansible'
+
+  - task: DownloadSecureFile@1
+    name: sshKey
+    displayName: 'Download SSH Private Key'
+    inputs:
+      secureFile: 'epicbook_key'
+
+  - script: |
+      mkdir -p ~/.ssh
+      cp $(sshKey.secureFilePath) ~/.ssh/epicbook_key
+      chmod 600 ~/.ssh/epicbook_key
+      cp ~/.ssh/epicbook_key $(System.DefaultWorkingDirectory)/ansible/epicbook_key
+    displayName: 'Setup SSH Key'
+
+  - script: |
+      cd ansible
+      ansible-playbook -i inventory/hosts.ini site.yml -v
+    displayName: 'Run Ansible Playbook'
