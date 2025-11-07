@@ -7,6 +7,15 @@ stages:
         pool:
           name: "Default"
 
+        variables:
+          BACKEND_PRIVATE_IP: $(backend_private_ip)
+          BACKEND_PORT: $(backend_port)
+          FRONTEND_PORT: $(frontend_port)
+          MYSQL_FQDN: $(mysql_fqdn)
+          MYSQL_ADMIN_USERNAME: $(mysql_admin_username)
+          MYSQL_ADMIN_PASSWORD: $(mysql_admin_password)
+          MYSQL_DATABASE: $(mysql_database)
+
         steps:
           - checkout: self
 
@@ -29,7 +38,9 @@ stages:
 
           - script: |
               cd app-epicbook/ansible
-              ansible-playbook -i inventory.ini site.yml --ssh-extra-args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" -v
+              ansible-playbook -i inventory.ini site.yml \
+                --extra-vars "backend_private_ip=$(BACKEND_PRIVATE_IP) backend_port=$(BACKEND_PORT) frontend_port=$(FRONTEND_PORT) mysql_fqdn=$(MYSQL_FQDN) mysql_admin_username=$(MYSQL_ADMIN_USERNAME) mysql_admin_password=$(MYSQL_ADMIN_PASSWORD) mysql_database=$(MYSQL_DATABASE)" \
+                --ssh-extra-args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" -v
             displayName: "Run Ansible Playbook"
             env:
               ANSIBLE_HOST_KEY_CHECKING: "False"

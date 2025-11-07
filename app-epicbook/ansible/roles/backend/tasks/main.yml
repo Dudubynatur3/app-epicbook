@@ -1,5 +1,3 @@
----
-# Install Node.js
 - name: Install Node.js repository
   shell: curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   args:
@@ -42,18 +40,13 @@
     group: azureuser
     mode: '0600'
     content: |
-      # Database Configuration
       DB_HOST={{ mysql_fqdn }}
       DB_PORT={{ mysql_port }}
       DB_USER={{ mysql_admin_username }}
       DB_PASSWORD={{ mysql_admin_password }}
       DB_NAME={{ mysql_database }}
-      
-      # Application Configuration
       PORT={{ backend_port }}
       NODE_ENV=production
-      
-      # JWT Secret (generate a secure one for production)
       JWT_SECRET=your-super-secret-jwt-key-change-in-production
 
 - name: Install backend dependencies
@@ -76,7 +69,7 @@
       Type=simple
       User=azureuser
       WorkingDirectory=/opt/epicbook/backend
-      EnvironmentFile=/opt/epicbook/backend/.env
+      EnvironmentFile=/opt/opt/epicbook/backend/.env
       ExecStart=/usr/bin/node src/server.js
       Restart=always
       RestartSec=10
@@ -93,19 +86,3 @@
     name: epicbook-backend
     state: started
     enabled: yes
-
-- name: Wait for backend to be ready
-  wait_for:
-    port: "{{ backend_port }}"
-    delay: 5
-    timeout: 60
-
-- name: Display backend status
-  debug:
-    msg:
-      - "Backend deployed successfully!"
-      - "Service: epicbook-backend"
-      - "Port: {{ backend_port }}"
-      - "Database: {{ mysql_fqdn }}"
-      - "Check status: sudo systemctl status epicbook-backend"
-      - "View logs: sudo journalctl -u epicbook-backend -f"
