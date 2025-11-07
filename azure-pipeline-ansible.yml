@@ -1,10 +1,3 @@
-# azure-pipeline-ansible.yml
-
-trigger:
-  branches:
-    include:
-      - main
-
 stages:
   - stage: DeployApp
     displayName: "Deploy Application Code via Ansible"
@@ -12,9 +5,11 @@ stages:
       - job: App_Deployment
         displayName: "Run Ansible Playbook to Deploy App"
         pool:
-          name: "Default"   # your self-hosted agent name
+          name: "Default"
 
         steps:
+          - checkout: self
+
           - script: |
               sudo apt update
               sudo apt install -y ansible sshpass
@@ -34,7 +29,7 @@ stages:
 
           - script: |
               cd app-epicbook/ansible
-              ansible-playbook -i inventory.ini site.yml --ssh-extra-args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+              ansible-playbook -i inventory.ini site.yml --ssh-extra-args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" -v
             displayName: "Run Ansible Playbook"
             env:
               ANSIBLE_HOST_KEY_CHECKING: "False"
