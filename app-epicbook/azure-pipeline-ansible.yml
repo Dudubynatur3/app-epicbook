@@ -19,6 +19,13 @@
             clean: true
             fetchDepth: 1
           - script: |
+              echo "Cleaning any cached Ansible files..."
+              rm -rf /home/azureuser/myagent/_work/3/s/app-epicbook/ansible/roles/common/tasks/main.yml
+              rm -rf ~/.ansible
+              ls -la app-epicbook/ansible/roles/common/tasks/
+              cat app-epicbook/ansible/roles/common/tasks/main.yml
+            displayName: "Clean cached files and verify"
+          - script: |
               sudo apt update
               sudo apt install -y ansible sshpass
             displayName: "Install Ansible & SSH dependencies"
