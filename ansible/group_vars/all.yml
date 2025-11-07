@@ -1,0 +1,10 @@
+---
+# MySQL Configuration
+mysql_host: "MYSQL_FQDN"
+mysql_database: "epicbookdb"
+mysql_user: "mysqladmin"
+mysql_password: "P@ssw0rd1234!"
+
+# Application Configuration
+app_port: 3000
+backend_private_ip: "BACKEND_PRIVATE_IP"

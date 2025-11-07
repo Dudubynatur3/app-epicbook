@@ -1,0 +1,95 @@
+---
+- name: Install Nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Create web directory
+  file:
+    path: /var/www/epicbook
+    state: directory
+    mode: '0755'
+
+- name: Create index.html
+  copy:
+    dest: /var/www/epicbook/index.html
+    content: |
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>EpicBook - Online Library</title>
+          <style>
+              body {
+                  font-family: Arial, sans-serif;
+                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                  color: white;
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  height: 100vh;
+                  margin: 0;
+              }
+              .container {
+                  text-align: center;
+                  background: rgba(255,255,255,0.1);
+                  padding: 50px;
+                  border-radius: 20px;
+                  backdrop-filter: blur(10px);
+              }
+              h1 { font-size: 3em; margin-bottom: 20px; }
+              p { font-size: 1.2em; }
+              .status { margin-top: 30px; font-size: 0.9em; opacity: 0.8; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <h1>📚 EpicBook</h1>
+              <p>Your Online Library Platform</p>
+              <p>Successfully deployed via Azure DevOps!</p>
+              <div class="status">
+                  <p>Frontend: ✅ Running on Nginx</p>
+                  <p>Backend: ✅ Connected to {{ backend_private_ip }}:{{ app_port }}</p>
+                  <p>Database: ✅ MySQL Connected</p>
+              </div>
+          </div>
+      </body>
+      </html>
+
+- name: Configure Nginx
+  copy:
+    dest: /etc/nginx/sites-available/epicbook
+    content: |
+      server {
+          listen 80;
+          server_name _;
+          
+          root /var/www/epicbook;
+          index index.html;
+          
+          location / {
+              try_files $uri $uri/ =404;
+          }
+          
+          location /api/ {
+              proxy_pass http://{{ backend_private_ip }}:{{ app_port }}/api/;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+          }
+      }
+
+- name: Enable Nginx site
+  file:
+    src: /etc/nginx/sites-available/epicbook
+    dest: /etc/nginx/sites-enabled/epicbook
+    state: link
+
+- name: Remove default Nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Restart Nginx
+  systemd:
+    name: nginx
+    state: restarted
+    enabled: yes

@@ -1,0 +1,14 @@
+﻿# Ansible
+*.retry
+.ansible/
+
+# SSH keys (CRITICAL - never commit these!)
+*.pem
+*.key
+id_rsa*
+
+# Environment & IDE
+.env
+*.tfvars
+.vscode/
+.idea/
