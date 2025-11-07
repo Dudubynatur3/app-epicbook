@@ -1,44 +1,45 @@
----
-- name: Common configuration for all servers
-  hosts: all
+﻿---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
   become: yes
-  tasks:
-    
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600
 
-    - name: Install common packages
-      apt:
-        name:
-          - curl
-          - wget
-          - git
-          - htop
-          - vim
-          - ufw
-          - jq
-        state: present
+- name: Install common packages
+  apt:
+    name:
+      - curl
+      - wget
+      - git
+      - htop
+      - vim
+      - ufw
+      - jq
+    state: present
+  become: yes
 
-    - name: Configure firewall - allow SSH
-      ufw:
-        rule: allow
-        port: '22'
-        proto: tcp
+- name: Configure firewall - allow SSH
+  ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+  become: yes
 
-    - name: Enable UFW
-      ufw:
-        state: enabled
+- name: Enable UFW
+  ufw:
+    state: enabled
+  become: yes
 
-    - name: Set timezone to UTC
-      timezone:
-        name: UTC
+- name: Set timezone to UTC
+  timezone:
+    name: UTC
+  become: yes
 
-    - name: Create app directory
-      file:
-        path: /opt/epicbook
-        state: directory
-        owner: azureuser
-        group: azureuser
-        mode: '0755'
+- name: Create app directory
+  file:
+    path: /opt/epicbook
+    state: directory
+    owner: azureuser
+    group: azureuser
+    mode: '0755'
+  become: yes
