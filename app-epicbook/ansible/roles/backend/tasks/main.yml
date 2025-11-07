@@ -1,0 +1,111 @@
+---
+# Install Node.js
+- name: Install Node.js repository
+  shell: curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  args:
+    creates: /etc/apt/sources.list.d/nodesource.list
+
+- name: Install Node.js and build tools
+  apt:
+    name:
+      - nodejs
+      - build-essential
+    state: present
+    update_cache: yes
+
+- name: Install MySQL client
+  apt:
+    name: mysql-client
+    state: present
+
+- name: Create backend app directory
+  file:
+    path: /opt/epicbook/backend
+    state: directory
+    owner: azureuser
+    group: azureuser
+    mode: '0755'
+
+- name: Copy backend application code
+  synchronize:
+    src: "{{ playbook_dir }}/../backend/"
+    dest: /opt/epicbook/backend/
+    delete: no
+    recursive: yes
+  become: yes
+  become_user: azureuser
+
+- name: Create backend .env file
+  copy:
+    dest: /opt/epicbook/backend/.env
+    owner: azureuser
+    group: azureuser
+    mode: '0600'
+    content: |
+      # Database Configuration
+      DB_HOST={{ mysql_fqdn }}
+      DB_PORT={{ mysql_port }}
+      DB_USER={{ mysql_admin_username }}
+      DB_PASSWORD={{ mysql_admin_password }}
+      DB_NAME={{ mysql_database }}
+      
+      # Application Configuration
+      PORT={{ backend_port }}
+      NODE_ENV=production
+      
+      # JWT Secret (generate a secure one for production)
+      JWT_SECRET=your-super-secret-jwt-key-change-in-production
+
+- name: Install backend dependencies
+  npm:
+    path: /opt/epicbook/backend
+    state: present
+  become: yes
+  become_user: azureuser
+
+- name: Create systemd service for backend
+  copy:
+    dest: /etc/systemd/system/epicbook-backend.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=EpicBook Backend API
+      After=network.target mysql.service
+
+      [Service]
+      Type=simple
+      User=azureuser
+      WorkingDirectory=/opt/epicbook/backend
+      EnvironmentFile=/opt/epicbook/backend/.env
+      ExecStart=/usr/bin/node src/server.js
+      Restart=always
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and start backend service
+  systemd:
+    name: epicbook-backend
+    state: started
+    enabled: yes
+
+- name: Wait for backend to be ready
+  wait_for:
+    port: "{{ backend_port }}"
+    delay: 5
+    timeout: 60
+
+- name: Display backend status
+  debug:
+    msg:
+      - "Backend deployed successfully!"
+      - "Service: epicbook-backend"
+      - "Port: {{ backend_port }}"
+      - "Database: {{ mysql_fqdn }}"
+      - "Check status: sudo systemctl status epicbook-backend"
+      - "View logs: sudo journalctl -u epicbook-backend -f"

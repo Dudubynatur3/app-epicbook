@@ -1,0 +1,25 @@
+---
+# Infrastructure variables
+backend_private_ip: "10.0.2.4"
+backend_public_ip: "172.190.182.68"
+frontend_public_ip: "20.169.223.106"
+
+# Database configuration
+mysql_fqdn: "epicbook-mysql-by4fxg7m.mysql.database.azure.com"
+mysql_admin_username: "mysqladmin"
+mysql_admin_password: "{{ lookup('env', 'MYSQL_ADMIN_PASSWORD') }}"
+mysql_database: "epicbook_db"
+mysql_port: 3306
+
+# Application configuration
+app_name: "epicbook"
+app_env: "production"
+backend_port: 5000
+frontend_port: 3000
+
+# Backend API endpoint for frontend
+backend_api_url: "http://{{ backend_private_ip }}:{{ backend_port }}"
+
+# Application directories
+app_dir_backend: "/opt/epicbook/backend"
+app_dir_frontend: "/opt/epicbook/frontend"

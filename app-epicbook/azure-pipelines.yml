@@ -1,0 +1,489 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: 'Default'
+
+variables:
+  - name: workingDirectory
+    value: '$(System.DefaultWorkingDirectory)'
+  - group: terraform-secrets  # Add this if using variable group
+
+stages:
+  - stage: Terraform
+    displayName: 'Provision Infrastructure'
+    jobs:
+      - job: TerraformJob
+        displayName: 'Run Terraform Deployment'
+        steps:
+
+          # 🔐 Download SSH Public Key
+          - task: DownloadSecureFile@1
+            name: sshPublicKey
+            inputs:
+              secureFile: 'id_rsa.pub'
+            displayName: 'Download SSH Public Key'
+
+          # 🧩 Load SSH Public Key into Variable
+          - bash: |
+              echo "Reading SSH public key content..."
+              SSH_KEY_CONTENT=$(cat $(sshPublicKey.secureFilePath))
+              echo "SSH Key loaded (length: ${#SSH_KEY_CONTENT} characters)"
+              echo "##vso[task.setvariable variable=SSH_PUBLIC_KEY;issecret=true]$SSH_KEY_CONTENT"
+            displayName: 'Load SSH Key into Variable'
+
+          # 🔍 Debug variable presence
+          - bash: |
+              echo "DEBUG: checking variable lengths (0 = missing)"
+              echo "MY_SQL_ADMIN_USERNAME length: ${#MY_SQL_ADMIN_USERNAME}"
+              echo "MY_SQL_ADMIN_PASSWORD length: ${#MY_SQL_ADMIN_PASSWORD}"
+              echo "SSH_PUBLIC_KEY length: ${#SSH_PUBLIC_KEY}"
+              echo ""
+              echo "Variable values (first 3 chars only for security):"
+              echo "Username starts with: ${MY_SQL_ADMIN_USERNAME:0:3}..."
+              echo "Password starts with: ${MY_SQL_ADMIN_PASSWORD:0:3}..."
+              echo ""
+              if [[ "$MY_SQL_ADMIN_USERNAME" == \$* ]]; then
+                echo "❌ ERROR: MY_SQL_ADMIN_USERNAME is not expanded! It contains: $MY_SQL_ADMIN_USERNAME"
+                echo "This means the variable is NOT defined in your pipeline variables!"
+                exit 1
+              fi
+              if [[ "$MY_SQL_ADMIN_PASSWORD" == \$* ]]; then
+                echo "❌ ERROR: MY_SQL_ADMIN_PASSWORD is not expanded! It contains: $MY_SQL_ADMIN_PASSWORD"
+                echo "This means the variable is NOT defined in your pipeline variables!"
+                exit 1
+              fi
+              echo "✅ Variables are properly set"
+            displayName: 'Debug: Variable Presence Check'
+            env:
+              MY_SQL_ADMIN_USERNAME: $(MY_SQL_ADMIN_USERNAME)
+              MY_SQL_ADMIN_PASSWORD: $(MY_SQL_ADMIN_PASSWORD)
+              SSH_PUBLIC_KEY: $(SSH_PUBLIC_KEY)
+
+          # 🚀 Terraform Init
+          - task: AzureCLI@2
+            displayName: 'Terraform Init'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "Initializing Terraform..."
+                terraform init -input=false
+
+          # ✅ Validate Terraform Config
+          - task: AzureCLI@2
+            displayName: 'Terraform Validate'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "Validating Terraform configuration..."
+                terraform validate
+
+          # 🧾 Terraform Plan
+          - task: AzureCLI@2
+            displayName: 'Terraform Plan'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "Creating Terraform execution plan..."
+                
+                # Verify variables are set
+                if [ -z "$MY_SQL_ADMIN_USERNAME" ] || [ "$MY_SQL_ADMIN_USERNAME" = '
+
+          # ⚙️ Terraform Apply
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "Applying Terraform configuration..."
+                terraform apply -input=false -auto-approve tfplan
+            env:
+              MY_SQL_ADMIN_USERNAME: $(MY_SQL_ADMIN_USERNAME)
+              MY_SQL_ADMIN_PASSWORD: $(MY_SQL_ADMIN_PASSWORD)
+              SSH_PUBLIC_KEY: $(SSH_PUBLIC_KEY)
+
+          # 📤 Show Terraform Outputs
+          - task: AzureCLI@2
+            displayName: 'Show Terraform Outputs'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "=========================================="
+                echo "      TERRAFORM INFRASTRUCTURE OUTPUTS"
+                echo "=========================================="
+                echo ""
+
+                if terraform output -json > terraform-outputs.json 2>/dev/null; then
+                  echo "✅ Terraform outputs file generated."
+                else
+                  echo "{}" > terraform-outputs.json
+                  echo "⚠️ No outputs found — empty file created instead."
+                fi
+
+                FRONTEND_IP=$(terraform output -raw frontend_public_ip 2>/dev/null || echo "N/A")
+                BACKEND_IP=$(terraform output -raw backend_public_ip 2>/dev/null || echo "N/A")
+                BACKEND_PRIVATE_IP=$(terraform output -raw backend_private_ip 2>/dev/null || echo "N/A")
+                MYSQL_FQDN=$(terraform output -raw mysql_fqdn 2>/dev/null || echo "N/A")
+
+                echo "📍 Frontend Public IP: $FRONTEND_IP"
+                echo "📍 Backend Public IP: $BACKEND_IP"
+                echo "📍 Backend Private IP: $BACKEND_PRIVATE_IP"
+                echo "📍 MySQL FQDN: $MYSQL_FQDN"
+                echo ""
+                
+                # Generate Ansible inventory dynamically
+                echo "=========================================="
+                echo "   Generating Ansible Inventory"
+                echo "=========================================="
+                
+                cat > ansible/inventory/hosts.ini <<EOF
+[frontend]
+frontend ansible_host=$FRONTEND_IP ansible_user=azureuser
+
+[backend]
+backend ansible_host=$BACKEND_IP ansible_user=azureuser
+
+[all:vars]
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+backend_private_ip=$BACKEND_PRIVATE_IP
+mysql_fqdn=$MYSQL_FQDN
+mysql_admin_username=$MY_SQL_ADMIN_USERNAME
+EOF
+
+                echo "✅ Ansible inventory generated at: ansible/inventory/hosts.ini"
+                echo ""
+                cat ansible/inventory/hosts.ini
+                echo ""
+                echo "=========================================="
+            env:
+              MY_SQL_ADMIN_USERNAME: $(MY_SQL_ADMIN_USERNAME)
+
+          # 📦 Publish Terraform Outputs
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Terraform Outputs'
+            inputs:
+              PathtoPublish: '$(workingDirectory)/terraform-outputs.json'
+              ArtifactName: 'terraform-outputs'
+              publishLocation: 'Container'
+            condition: succeededOrFailed()
+
+  # 🎭 Ansible Configuration Stage
+  - stage: Configure
+    displayName: 'Configure Infrastructure with Ansible'
+    dependsOn: Terraform
+    condition: succeeded()
+    jobs:
+      - job: AnsibleJob
+        displayName: 'Run Ansible Playbooks'
+        steps:
+
+          # 🔐 Download SSH Private Key
+          - task: DownloadSecureFile@1
+            name: sshPrivateKey
+            inputs:
+              secureFile: 'id_rsa'
+            displayName: 'Download SSH Private Key'
+
+          # 🔧 Setup SSH Key
+          - bash: |
+              mkdir -p ~/.ssh
+              cp $(sshPrivateKey.secureFilePath) ~/.ssh/id_rsa
+              chmod 600 ~/.ssh/id_rsa
+              echo "SSH key configured"
+            displayName: 'Setup SSH Key'
+
+          # 📦 Install Ansible
+          - bash: |
+              sudo apt-get update
+              sudo apt-get install -y software-properties-common
+              sudo add-apt-repository --yes --update ppa:ansible/ansible
+              sudo apt-get install -y ansible
+              ansible --version
+            displayName: 'Install Ansible'
+
+          # 🔄 Generate Dynamic Inventory from Terraform
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'terraform-outputs'
+              downloadPath: '$(System.ArtifactsDirectory)'
+            displayName: 'Download Terraform Outputs'
+
+          - bash: |
+              echo "Generating Ansible inventory from Terraform outputs..."
+              
+              FRONTEND_IP=$(jq -r '.frontend_public_ip.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              BACKEND_IP=$(jq -r '.backend_public_ip.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              BACKEND_PRIVATE_IP=$(jq -r '.backend_private_ip.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              MYSQL_FQDN=$(jq -r '.mysql_fqdn.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              
+              cat > $(workingDirectory)/ansible/inventory/hosts.ini <<EOF
+[frontend]
+frontend ansible_host=$FRONTEND_IP ansible_user=azureuser
+
+[backend]
+backend ansible_host=$BACKEND_IP ansible_user=azureuser
+
+[all:vars]
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+backend_private_ip=$BACKEND_PRIVATE_IP
+mysql_fqdn=$MYSQL_FQDN
+mysql_admin_username=$(MY_SQL_ADMIN_USERNAME)
+EOF
+              
+              echo "✅ Inventory generated:"
+              cat $(workingDirectory)/ansible/inventory/hosts.ini
+            displayName: 'Generate Ansible Inventory'
+            env:
+              MY_SQL_ADMIN_USERNAME: $(MY_SQL_ADMIN_USERNAME)
+
+          # ⏳ Wait for VMs to be ready
+          - bash: |
+              echo "Waiting for VMs to be accessible via SSH..."
+              FRONTEND_IP=$(jq -r '.frontend_public_ip.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              BACKEND_IP=$(jq -r '.backend_public_ip.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              
+              for ip in $FRONTEND_IP $BACKEND_IP; do
+                echo "Checking $ip..."
+                for i in {1..30}; do
+                  if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 azureuser@$ip "echo 'SSH connection successful'" 2>/dev/null; then
+                    echo "✅ $ip is ready"
+                    break
+                  fi
+                  echo "Attempt $i/30: Waiting for $ip..."
+                  sleep 10
+                done
+              done
+            displayName: 'Wait for VMs to be Ready'
+
+          # 🎯 Run Common Tasks
+          - bash: |
+              cd $(workingDirectory)/ansible
+              ansible-playbook -i inventory/hosts.ini playbooks/common_tasks/main.yml \
+                -e "mysql_admin_password=$(MY_SQL_ADMIN_PASSWORD)"
+            displayName: 'Run Common Configuration'
+            env:
+              MY_SQL_ADMIN_PASSWORD: $(MY_SQL_ADMIN_PASSWORD)
+              ANSIBLE_HOST_KEY_CHECKING: 'False'
+
+          # 🔙 Configure Backend
+          - bash: |
+              cd $(workingDirectory)/ansible
+              ansible-playbook -i inventory/hosts.ini playbooks/roles/backend/main.yml \
+                -e "mysql_admin_password=$(MY_SQL_ADMIN_PASSWORD)"
+            displayName: 'Configure Backend Server'
+            env:
+              MY_SQL_ADMIN_PASSWORD: $(MY_SQL_ADMIN_PASSWORD)
+              ANSIBLE_HOST_KEY_CHECKING: 'False'
+
+          # 🎨 Configure Frontend
+          - bash: |
+              cd $(workingDirectory)/ansible
+              ansible-playbook -i inventory/hosts.ini playbooks/roles/frontend/main.yml
+            displayName: 'Configure Frontend Server'
+            env:
+              ANSIBLE_HOST_KEY_CHECKING: 'False'
+
+          # ✅ Verify Deployment
+          - bash: |
+              echo "=========================================="
+              echo "      DEPLOYMENT VERIFICATION"
+              echo "=========================================="
+              FRONTEND_IP=$(jq -r '.frontend_public_ip.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              BACKEND_IP=$(jq -r '.backend_public_ip.value' $(System.ArtifactsDirectory)/terraform-outputs/terraform-outputs.json)
+              
+              echo ""
+              echo "🌐 Frontend URL: http://$FRONTEND_IP:3000"
+              echo "🔧 Backend URL: http://$BACKEND_IP:5000"
+              echo ""
+              echo "Testing endpoints..."
+              
+              # Test backend health
+              if curl -f -s "http://$BACKEND_IP:5000/health" > /dev/null 2>&1; then
+                echo "✅ Backend is responding"
+              else
+                echo "⚠️  Backend might still be starting up"
+              fi
+              
+              # Test frontend
+              if curl -f -s "http://$FRONTEND_IP:3000" > /dev/null 2>&1; then
+                echo "✅ Frontend is responding"
+              else
+                echo "⚠️  Frontend might still be starting up"
+              fi
+              
+              echo ""
+              echo "=========================================="
+            displayName: 'Verify Deployment'
+* ]; then
+                  echo "❌ ERROR: MY_SQL_ADMIN_USERNAME is not set or not expanded!"
+                  echo "Value received: $MY_SQL_ADMIN_USERNAME"
+                  echo ""
+                  echo "SOLUTION: Add MY_SQL_ADMIN_USERNAME to pipeline variables:"
+                  echo "  1. Edit pipeline → Variables → New variable"
+                  echo "  2. Name: MY_SQL_ADMIN_USERNAME"
+                  echo "  3. Value: mysqladmin"
+                  exit 1
+                fi
+                
+                if [ -z "$MY_SQL_ADMIN_PASSWORD" ] || [ "$MY_SQL_ADMIN_PASSWORD" = '
+
+          # ⚙️ Terraform Apply
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "Applying Terraform configuration..."
+                terraform apply -input=false -auto-approve tfplan
+            env:
+              MY_SQL_ADMIN_USERNAME: $(MY_SQL_ADMIN_USERNAME)
+              MY_SQL_ADMIN_PASSWORD: $(MY_SQL_ADMIN_PASSWORD)
+              SSH_PUBLIC_KEY: $(SSH_PUBLIC_KEY)
+
+          # 📤 Show Terraform Outputs
+          - task: AzureCLI@2
+            displayName: 'Show Terraform Outputs'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "=========================================="
+                echo "      TERRAFORM INFRASTRUCTURE OUTPUTS"
+                echo "=========================================="
+                echo ""
+
+                if terraform output -json > terraform-outputs.json 2>/dev/null; then
+                  echo "✅ Terraform outputs file generated."
+                else
+                  echo "{}" > terraform-outputs.json
+                  echo "⚠️ No outputs found — empty file created instead."
+                fi
+
+                FRONTEND_IP=$(terraform output -raw frontend_public_ip 2>/dev/null || echo "N/A")
+                BACKEND_IP=$(terraform output -raw backend_public_ip 2>/dev/null || echo "N/A")
+                MYSQL_FQDN=$(terraform output -raw mysql_fqdn 2>/dev/null || echo "N/A")
+
+                echo "📍 Frontend Public IP: $FRONTEND_IP"
+                echo "📍 Backend Public IP: $BACKEND_IP"
+                echo "📍 MySQL FQDN: $MYSQL_FQDN"
+                echo ""
+                echo "=========================================="
+                echo "   Update ansible/inventory.ini & vars"
+                echo "=========================================="
+
+          # 📦 Publish Terraform Outputs
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Terraform Outputs'
+            inputs:
+              PathtoPublish: '$(workingDirectory)/terraform-outputs.json'
+              ArtifactName: 'terraform-outputs'
+              publishLocation: 'Container'
+            condition: succeededOrFailed()
+* ]; then
+                  echo "❌ ERROR: MY_SQL_ADMIN_PASSWORD is not set or not expanded!"
+                  echo ""
+                  echo "SOLUTION: Add MY_SQL_ADMIN_PASSWORD to pipeline variables:"
+                  echo "  1. Edit pipeline → Variables → New variable"
+                  echo "  2. Name: MY_SQL_ADMIN_PASSWORD"
+                  echo "  3. Value: Your secure password"
+                  echo "  4. Check 'Keep this value secret'"
+                  exit 1
+                fi
+                
+                # Export as TF_VAR_ for Terraform to automatically pick up
+                export TF_VAR_mysql_admin_username="$MY_SQL_ADMIN_USERNAME"
+                export TF_VAR_mysql_admin_password="$MY_SQL_ADMIN_PASSWORD"
+                export TF_VAR_admin_ssh_public_key="$SSH_PUBLIC_KEY"
+                
+                echo "✅ All variables validated and exported"
+                
+                # Run terraform plan (no need for -var flags, Terraform reads TF_VAR_ automatically)
+                terraform plan -input=false -out=tfplan
+            env:
+              MY_SQL_ADMIN_USERNAME: $(MY_SQL_ADMIN_USERNAME)
+              MY_SQL_ADMIN_PASSWORD: $(MY_SQL_ADMIN_PASSWORD)
+              SSH_PUBLIC_KEY: $(SSH_PUBLIC_KEY)
+
+          # ⚙️ Terraform Apply
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "Applying Terraform configuration..."
+                terraform apply -input=false -auto-approve tfplan
+            env:
+              MY_SQL_ADMIN_USERNAME: $(MY_SQL_ADMIN_USERNAME)
+              MY_SQL_ADMIN_PASSWORD: $(MY_SQL_ADMIN_PASSWORD)
+              SSH_PUBLIC_KEY: $(SSH_PUBLIC_KEY)
+
+          # 📤 Show Terraform Outputs
+          - task: AzureCLI@2
+            displayName: 'Show Terraform Outputs'
+            inputs:
+              azureSubscription: 'epicbook-infra-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(workingDirectory)'
+              inlineScript: |
+                echo "=========================================="
+                echo "      TERRAFORM INFRASTRUCTURE OUTPUTS"
+                echo "=========================================="
+                echo ""
+
+                if terraform output -json > terraform-outputs.json 2>/dev/null; then
+                  echo "✅ Terraform outputs file generated."
+                else
+                  echo "{}" > terraform-outputs.json
+                  echo "⚠️ No outputs found — empty file created instead."
+                fi
+
+                FRONTEND_IP=$(terraform output -raw frontend_public_ip 2>/dev/null || echo "N/A")
+                BACKEND_IP=$(terraform output -raw backend_public_ip 2>/dev/null || echo "N/A")
+                MYSQL_FQDN=$(terraform output -raw mysql_fqdn 2>/dev/null || echo "N/A")
+
+                echo "📍 Frontend Public IP: $FRONTEND_IP"
+                echo "📍 Backend Public IP: $BACKEND_IP"
+                echo "📍 MySQL FQDN: $MYSQL_FQDN"
+                echo ""
+                echo "=========================================="
+                echo "   Update ansible/inventory.ini & vars"
+                echo "=========================================="
+
+          # 📦 Publish Terraform Outputs
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Terraform Outputs'
+            inputs:
+              PathtoPublish: '$(workingDirectory)/terraform-outputs.json'
+              ArtifactName: 'terraform-outputs'
+              publishLocation: 'Container'
+            condition: succeededOrFailed()
