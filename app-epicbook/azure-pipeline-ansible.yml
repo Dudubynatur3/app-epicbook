@@ -1,4 +1,4 @@
-stages:
+﻿stages:
   - stage: DeployApp
     displayName: "Deploy Application Code via Ansible"
     jobs:
@@ -6,7 +6,6 @@ stages:
         displayName: "Run Ansible Playbook to Deploy App"
         pool:
           name: "Default"
-
         variables:
           BACKEND_PRIVATE_IP: $(backend_private_ip)
           BACKEND_PORT: $(backend_port)
@@ -15,27 +14,24 @@ stages:
           MYSQL_ADMIN_USERNAME: $(mysql_admin_username)
           MYSQL_ADMIN_PASSWORD: $(mysql_admin_password)
           MYSQL_DATABASE: $(mysql_database)
-
         steps:
           - checkout: self
-
+            clean: true
+            fetchDepth: 1
           - script: |
               sudo apt update
               sudo apt install -y ansible sshpass
             displayName: "Install Ansible & SSH dependencies"
-
           - task: DownloadSecureFile@1
             name: download_ssh_key
             inputs:
               secureFile: "id_rsa"
-
           - script: |
               mkdir -p ~/.ssh
               cp $(download_ssh_key.secureFilePath) ~/.ssh/id_rsa
               chmod 600 ~/.ssh/id_rsa
               echo "StrictHostKeyChecking no" > ~/.ssh/config
             displayName: "Setup SSH Private Key"
-
           - script: |
               cd app-epicbook/ansible
               ansible-playbook -i inventory.ini site.yml \
