@@ -1,11 +1,21 @@
-﻿stages:
+﻿# azure-pipelines.yml
+trigger:
+  branches:
+    include:
+      - main
+      - master
+
+stages:
   - stage: DeployApp
     displayName: "Deploy Application Code via Ansible"
     jobs:
       - job: App_Deployment
         displayName: "Run Ansible Playbook to Deploy App"
         pool:
-          name: "Default"
+          name: "Default"     # ✅ Use your self-hosted agent pool
+          demands:
+            - agent.name -equals Default
+
         variables:
           BACKEND_PRIVATE_IP: $(backend_private_ip)
           BACKEND_PORT: $(backend_port)
@@ -14,36 +24,75 @@
           MYSQL_ADMIN_USERNAME: $(mysql_admin_username)
           MYSQL_ADMIN_PASSWORD: $(mysql_admin_password)
           MYSQL_DATABASE: $(mysql_database)
+
         steps:
+          # Step 1: Clean and Checkout
           - checkout: self
             clean: true
-            fetchDepth: 1
+            displayName: "Checkout repository"
+
           - script: |
-              echo "Cleaning any cached Ansible files..."
-              rm -rf /home/azureuser/myagent/_work/3/s/app-epicbook/ansible/roles/common/tasks/main.yml
-              rm -rf ~/.ansible
-              ls -la app-epicbook/ansible/roles/common/tasks/
-              cat app-epicbook/ansible/roles/common/tasks/main.yml
-            displayName: "Clean cached files and verify"
+              echo "Current working directory:"
+              pwd
+              echo "Listing repo root:"
+              ls -la
+            displayName: "Verify agent working directory"
+
+          # Step 2: Ensure Ansible is installed on self-hosted agent
           - script: |
-              sudo apt update
-              sudo apt install -y ansible sshpass
-            displayName: "Install Ansible & SSH dependencies"
+              echo "Installing Ansible if not present..."
+              sudo apt-get update -y
+              if ! command -v ansible >/dev/null 2>&1; then
+                sudo apt-get install -y ansible sshpass
+              else
+                echo "Ansible already installed."
+              fi
+              ansible --version
+            displayName: "Install/Verify Ansible & SSH dependencies"
+
+          # Step 3: Download SSH Private Key
           - task: DownloadSecureFile@1
             name: download_ssh_key
+            displayName: "Download SSH Private Key"
             inputs:
               secureFile: "id_rsa"
+
+          # Step 4: Setup SSH Key
           - script: |
               mkdir -p ~/.ssh
-              cp $(download_ssh_key.secureFilePath) ~/.ssh/id_rsa
+              cp "$(download_ssh_key.secureFilePath)" ~/.ssh/id_rsa
               chmod 600 ~/.ssh/id_rsa
-              echo "StrictHostKeyChecking no" > ~/.ssh/config
-            displayName: "Setup SSH Private Key"
+              echo "Host *" > ~/.ssh/config
+              echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+              echo "  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
+              ls -la ~/.ssh
+            displayName: "Setup SSH Key for Ansible Access"
+
+          # Step 5: Validate Ansible folder and playbook
           - script: |
+              echo "Validating Ansible directory..."
+              cd app-epicbook/ansible
+              echo "Current path: $(pwd)"
+              echo "Contents:"
+              ls -R
+              echo "Previewing site.yml header:"
+              head -n 20 site.yml
+            displayName: "Verify Ansible Files Exist"
+
+          # Step 6: Run Ansible Playbook
+          - script: |
+              echo "Running Ansible Playbook..."
               cd app-epicbook/ansible
               ansible-playbook -i inventory.ini site.yml \
-                --extra-vars "backend_private_ip=$(BACKEND_PRIVATE_IP) backend_port=$(BACKEND_PORT) frontend_port=$(FRONTEND_PORT) mysql_fqdn=$(MYSQL_FQDN) mysql_admin_username=$(MYSQL_ADMIN_USERNAME) mysql_admin_password=$(MYSQL_ADMIN_PASSWORD) mysql_database=$(MYSQL_DATABASE)" \
-                --ssh-extra-args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" -v
+                --extra-vars "\
+                  backend_private_ip=$(BACKEND_PRIVATE_IP) \
+                  backend_port=$(BACKEND_PORT) \
+                  frontend_port=$(FRONTEND_PORT) \
+                  mysql_fqdn=$(MYSQL_FQDN) \
+                  mysql_admin_username=$(MYSQL_ADMIN_USERNAME) \
+                  mysql_admin_password=$(MYSQL_ADMIN_PASSWORD) \
+                  mysql_database=$(MYSQL_DATABASE)" \
+                --ssh-extra-args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" -vv
             displayName: "Run Ansible Playbook"
             env:
               ANSIBLE_HOST_KEY_CHECKING: "False"
