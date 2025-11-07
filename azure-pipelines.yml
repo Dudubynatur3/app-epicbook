@@ -1,0 +1,41 @@
+stages:
+  - stage: DeployApp
+    displayName: "Deploy Book Review App via Ansible"
+    jobs:
+      - job: App_Deployment
+        displayName: "Run Ansible Playbook"
+        pool:
+          name: "Default"
+
+        steps:
+          # 1. Checkout repository
+          - checkout: self
+
+          # 2. Install Ansible & SSH dependencies
+          - script: |
+              sudo apt update
+              sudo apt install -y ansible sshpass
+            displayName: "Install Ansible & SSH dependencies"
+
+          # 3. Download SSH private key from secure files
+          - task: DownloadSecureFile@1
+            name: download_ssh_key
+            inputs:
+              secureFile: "id_rsa"
+
+          # 4. Setup SSH private key for Ansible
+          - script: |
+              mkdir -p ~/.ssh
+              cp $(download_ssh_key.secureFilePath) ~/.ssh/id_rsa
+              chmod 600 ~/.ssh/id_rsa
+              echo "StrictHostKeyChecking no" > ~/.ssh/config
+            displayName: "Setup SSH Private Key"
+
+          # 5. Run Ansible playbook
+          - script: |
+              cd app-epicbook/ansible
+              ansible-playbook -i inventory.ini site.yml --ssh-extra-args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" -v
+            displayName: "Run Ansible Playbook"
+            env:
+              ANSIBLE_HOST_KEY_CHECKING: "False"
+              MYSQL_ADMIN_PASSWORD: $(MYSQL_ADMIN_PASSWORD)
