@@ -3,12 +3,12 @@
     update_cache: yes
     cache_valid_time: 3600
 
-- name: Install common packages
+- name: Install essential packages
   apt:
     name:
       - curl
-      - wget
       - git
+      - wget
       - htop
       - vim
       - ufw
@@ -29,7 +29,7 @@
   timezone:
     name: UTC
 
-- name: Create app directory
+- name: Create application base directory
   file:
     path: /opt/epicbook
     state: directory
